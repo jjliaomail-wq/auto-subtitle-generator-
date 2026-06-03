@@ -1,3 +1,6 @@
+<img width="224" height="138" alt="Adobe Express - 錄製內容 2026-06-03 142839" src="https://github.com/user-attachments/assets/22b3b9d3-bbe9-424b-be01-44566ace22bc" />
+
+
 <img width="1185" height="788" alt="螢幕擷取畫面 2026-06-03 145442" src="https://github.com/user-attachments/assets/2e42b70c-14bb-4c0d-9f17-b2bb9c12b1be" />
 
 # Local Auto Subtitle Generator (本地端自動字幕生成器)
