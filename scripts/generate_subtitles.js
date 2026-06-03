@@ -3,13 +3,14 @@
 // 依目錄內所有音訊檔產生中文 SRT、英文 SRT、以及英文→中文 SRT
 // ------------------------------------------------------------
 process.env.ORT_LOG_SEVERITY_LEVEL = '3'; // 隱藏 ONNX 煩人的警告訊息
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // 忽略自簽憑證錯誤 (解決 Google Translate API 憑證問題)
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs/promises";
 import { globSync } from "glob";
 import { pipeline } from "@xenova/transformers";
-import translate from "@vitalets/google-translate-api";
+import { translate } from "@vitalets/google-translate-api";
 import SrtParser from "srt-parser-2";
 
 // 取得本檔案所在目錄
@@ -185,13 +186,8 @@ function secondsToTimestamp(sec) {
 }
 
 async function translateSrt(lines, toLang) {
-  // Use the imported translate function directly (commonjs default export)
-  const translator = typeof translate === 'function' ? translate : (translate && translate.default);
-  if (!translator) {
-    throw new Error('Google translate function not found');
-  }
   const texts = lines.map(l => l.text).join('\n');
-  const { text } = await translator(texts, { to: toLang });
+  const { text } = await translate(texts, { to: toLang });
   const translated = text.split('\n');
   return lines.map((l, i) => ({
     ...l,
@@ -228,6 +224,7 @@ async function translateSrt(lines, toLang) {
       // 判斷語系（簡易檢測是否包含中文字符）
       const containsChinese = transcribedLines.some(l => /[\u4e00-\u9fff]/.test(l.text));
       const sourceLang = containsChinese ? "zh" : "en";
+      
       // 產生原始語系字幕檔 (SRT & VTT)
       const sourceSrt = formatSrt(transcribedLines);
       const sourceVtt = formatVtt(transcribedLines);
@@ -240,8 +237,28 @@ async function translateSrt(lines, toLang) {
       await fs.writeFile(srtPath, sourceSrt, "utf8");
       await fs.writeFile(vttPath, sourceVtt, "utf8");
       
-      console.log(`   📄 產出 SRT：${srtPath}`);
-      console.log(`   📄 產出 VTT：${vttPath}`);
+      console.log(`   📄 產出原始 SRT：${srtPath}`);
+      console.log(`   📄 產出原始 VTT：${vttPath}`);
+
+      // 2️⃣ 翻譯字幕
+      const targetLang = sourceLang === "zh" ? "en" : "zh-TW";
+      console.log(`   🔤 偵測到主要語言為 ${sourceLang}，開始翻譯為 ${targetLang}...`);
+      try {
+        const translatedLines = await translateSrt(transcribedLines, targetLang);
+        const translatedSrt = formatSrt(translatedLines);
+        const translatedVtt = formatVtt(translatedLines);
+        
+        const transSrtPath = path.join(fileDir, `${baseName}_${targetLang}.srt`);
+        const transVttPath = path.join(fileDir, `${baseName}_${targetLang}.vtt`);
+        
+        await fs.writeFile(transSrtPath, translatedSrt, "utf8");
+        await fs.writeFile(transVttPath, translatedVtt, "utf8");
+        
+        console.log(`   📄 產出翻譯 SRT：${transSrtPath}`);
+        console.log(`   📄 產出翻譯 VTT：${transVttPath}`);
+      } catch (transErr) {
+        console.error(`   ❌ 翻譯失敗: ${transErr.message}`);
+      }
     }
 
     console.log("✅ 所有字幕檔案已產生完畢！");
