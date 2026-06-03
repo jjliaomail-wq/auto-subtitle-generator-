@@ -1,0 +1,16 @@
+# 排除過於龐大的 Node.js 依存套件資料夾
+node_modules/
+
+# 排除下載的巨大 Whisper AI 模型檔（通常副檔名是 .onnx 或 .bin，依你專案而定）
+*.onnx
+*.bin
+models/
+
+# 排除你用來測試的私人影音檔案
+*.mp3
+*.wav
+*.mp4
+
+# 排除系統暫存檔
+.DS_Store
+Thumbs.db
