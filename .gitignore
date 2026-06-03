@@ -6,10 +6,12 @@ node_modules/
 *.bin
 models/
 
-# 排除你用來測試的私人影音檔案
+# 排除你用來測試的私人影音與字幕檔案
 *.mp3
 *.wav
 *.mp4
+*.m4a
+*.srt
 
 # 排除系統暫存檔
 .DS_Store
