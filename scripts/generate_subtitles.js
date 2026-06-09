@@ -2,14 +2,13 @@
 // generate_subtitles.js
 // 依目錄內所有音訊檔產生中文 SRT、英文 SRT、以及英文→中文 SRT
 // ------------------------------------------------------------
-process.env.ORT_LOG_SEVERITY_LEVEL = '3'; // 隱藏 ONNX 煩人的警告訊息
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // 忽略自簽憑證錯誤 (解決 Google Translate API 憑證問題)
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs/promises";
 import { globSync } from "glob";
-import { pipeline } from "@xenova/transformers";
+import { execSync } from "node:child_process";
 import { translate } from "@vitalets/google-translate-api";
 import SrtParser from "srt-parser-2";
 
@@ -19,132 +18,73 @@ const __dirname = path.dirname(__filename);
 
 // ---------- 設定 ----------
 const AUDIO_GLOB = "*.{mp3,wav,m4a,flac,ogg,MP3,WAV,M4A,FLAC,OGG}"; // 支援大小寫副檔名
-const MODEL = "tiny"; // 可改為 base/medium 依需求
-
-import { spawn } from "node:child_process";
-import ffmpegPath from "ffmpeg-static";
 
 const parser = new SrtParser();
 
-// Helper: load audio using ffmpeg to Float32Array (16kHz mono)
-// Helper: load audio using ffmpeg to Float32Array (16kHz mono)
-async function loadAudio(filePath) {
-  // 使用 ffmpeg 以串流方式讀取 PCM，避免一次性載入大檔案造成緩衝限制
-  return new Promise((resolve, reject) => {
-    const args = [
-      "-i", filePath,
-      "-f", "s16le",
-      "-acodec", "pcm_s16le",
-      "-ar", "16000",
-      "-ac", "1",
-      "-",
-    ];
-    const ff = spawn(ffmpegPath, args);
-    const chunks = [];
-    ff.stdout.on("data", (data) => chunks.push(data));
-    ff.stderr.on("data", () => {}); // ignore stderr output
-    ff.on("error", (err) => reject(err));
-    ff.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new Error(`ffmpeg exited with code ${code}`));
-      }
-      const buffer = Buffer.concat(chunks);
-      // Convert Int16 PCM to Float32 normalized [-1, 1]
-      const int16 = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 2);
-      const float32 = new Float32Array(int16.length);
-      for (let i = 0; i < int16.length; i++) {
-        float32[i] = int16[i] / 32768;
-      }
-      resolve(float32);
-    });
-  });
+// Convert Simplified Chinese characters to Traditional (basic map)
+function toTraditional(str) {
+  const map = {
+    '产': '產', '内': '內', '馆': '館', '测': '測', '经': '經', '听': '聽', '里': '裡',
+    '过': '過', '后': '後', '为': '為', '简': '簡', '体': '體', '学': '學',
+    '化': '化', '总': '總', '错': '錯', '灯': '燈',
+    '从': '從', '神': '神', '经': '經', '科': '科', '学': '學', '产': '產', '内': '內', '馆': '館',
+    '测': '測', '听': '聽', '里': '裡', '过': '過', '后': '後', '为': '為', '简': '簡', '体': '體'
+  };
+  return str.replace(/[产内馆测经听里过后为简体化总错灯从神经科产内馆测听里过后为简体]/g, ch => map[ch] || ch);
 }
 
-// Split a long Whisper segment into shorter pieces based on sentence boundaries.
-function splitLongSegment(segment) {
-  const text = segment.text.trim();
-  // Split by punctuation followed by whitespace.
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  if (sentences.length <= 1) {
-    // Fallback: split into roughly equal chunks of 100 characters.
-    const maxLen = 100;
-    const chunks = [];
-    for (let i = 0; i < text.length; i += maxLen) {
-      chunks.push(text.slice(i, i + maxLen));
-    }
-    return generateSubsegments(segment.start, segment.end, chunks);
-  }
-  return generateSubsegments(segment.start, segment.end, sentences);
+function timestampToSeconds(timestamp) {
+  const match = timestamp.match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/);
+  if (!match) return 0;
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const s = parseInt(match[3], 10);
+  const ms = parseInt(match[4], 10);
+  return h * 3600 + m * 60 + s + ms / 1000;
 }
 
-function generateSubsegments(start, end, parts) {
-  const totalDuration = end - start;
-  const totalLength = parts.reduce((sum, p) => sum + p.length, 0);
-  const subsegments = [];
-  let curStart = start;
-  for (const part of parts) {
-    const proportion = part.length / totalLength;
-    const segDuration = totalDuration * proportion;
-    const segEnd = curStart + segDuration;
-    subsegments.push({
-      start: curStart,
-      end: segEnd,
-      text: part.trim(),
-    });
-    curStart = segEnd;
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
   }
-  return subsegments;
 }
 
 async function transcribe(audioPath) {
-  // 使用 transformers pipeline 進行 Whisper 轉寫，針對長音檔使用 chunk 參數
-  const transcriber = await pipeline("automatic-speech-recognition", `Xenova/whisper-${MODEL}`);
-  const audioArray = await loadAudio(audioPath);
-  const durationSec = audioArray.length / 16000;
-  const options = durationSec > 30 ? { chunk_length_s: 30, stride_length_s: 5 } : {};
-  const result = await transcriber(audioArray, options);
-  const rawSegments = result.segments || [{
-    start: 0,
-    end: result.duration || 0,
-    text: result.text,
-  }];
-  // If Whisper returns a single segment with zero duration, fallback to full audio length
-  if (rawSegments.length === 1 && rawSegments[0].start === rawSegments[0].end) {
-    rawSegments[0].end = durationSec;
+  const baseName = path.basename(audioPath, path.extname(audioPath));
+  const tempSrtPath = path.join(path.dirname(audioPath), `${baseName}_temp_transcribe.srt`);
+
+  console.log(`   🎙️ 啟動本地 Python faster-whisper 進行語音識別與自然斷句...`);
+  const pythonScript = path.join(__dirname, "local_transcribe.py");
+  const cmd = `python "${pythonScript}" "${audioPath}" "${tempSrtPath}"`;
+  
+  // 執行本地 python 轉寫
+  execSync(cmd, { stdio: "inherit" });
+
+  if (!(await fileExists(tempSrtPath))) {
+    throw new Error("轉寫失敗，未產生臨時 SRT 字幕檔。");
   }
-  // Split any segment longer than MAX_DURATION seconds into shorter pieces based on sentences
-  const MAX_DURATION = 4; // seconds per subtitle line
-  const splitLong = (segment) => {
-    const segDuration = segment.end - segment.start;
-    if (segDuration <= MAX_DURATION && segment.text.length <= 120) {
-      return [segment];
-    }
-    return splitLongSegment(segment);
-  };
-  const processedSegments = rawSegments.flatMap(splitLong);
-  // Ensure no segment exceeds MAX_DURATION seconds by further splitting if needed
-  const enforceMax = (segment) => {
-    const segDuration = segment.end - segment.start;
-    if (segDuration <= MAX_DURATION) return [segment];
-    // Split by approximate character count proportionally
-    const avgCharPerSec = segment.text.length / segDuration;
-    const targetCharCount = Math.round(avgCharPerSec * MAX_DURATION);
-    const chunks = [];
-    for (let i = 0; i < segment.text.length; i += targetCharCount) {
-      const part = segment.text.slice(i, i + targetCharCount).trim();
-      const partDuration = part.length / avgCharPerSec;
-      const start = i === 0 ? segment.start : chunks[chunks.length - 1].end;
-      const end = start + partDuration;
-      chunks.push({ start, end, text: part });
-    }
-    return chunks;
-  };
-  const finalSegments = processedSegments.flatMap(enforceMax);
-  return finalSegments.map((seg, i) => ({
+
+  // 讀取臨時 SRT 檔案內容
+  const srtText = await fs.readFile(tempSrtPath, "utf8");
+
+  // 刪除臨時檔案
+  try {
+    await fs.unlink(tempSrtPath);
+    console.log("   🧹 已清理本地臨時 SRT 檔。");
+  } catch (err) {
+    console.warn("   ⚠️ 無法刪除本地臨時 SRT 檔：", err.message);
+  }
+
+  // 解析 SRT
+  const parsed = parser.fromSrt(srtText);
+  return parsed.map((item, i) => ({
     id: i + 1,
-    startTime: seg.start,
-    endTime: seg.end,
-    text: seg.text.trim(),
+    startTime: timestampToSeconds(item.startTime),
+    endTime: timestampToSeconds(item.endTime),
+    text: toTraditional(item.text.trim()),
   }));
 }
 
