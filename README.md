@@ -1,3 +1,7 @@
+<img width="1072" height="664" alt="Adobe Express - 錄製內容 2026-06-03 142839" src="https://github.com/user-attachments/assets/8ca9f686-5d16-45ce-844a-233b43e64663" />
+
+<img width="1185" height="788" alt="螢幕擷取畫面 2026-06-03 145442" src="https://github.com/user-attachments/assets/2e42b70c-14bb-4c0d-9f17-b2bb9c12b1be" />
+
 # Local Auto Subtitle Generator (本地端自動字幕生成器)
 
 這是一個基於 Node.js 與 Whisper AI (`@xenova/transformers`) 開發的本地端自動字幕生成工具。支援直接將音訊或影片檔案拖曳至批次檔上，一鍵自動產生雙語（預設繁體中文與英文翻譯）SRT 字幕檔。
