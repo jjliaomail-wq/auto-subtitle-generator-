@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "gen-sub": "node scripts/generate_subtitles.js"
+    "gen-sub": "node scripts/generate_subtitles.js",
+    "gen-sub-diarize": "node scripts/generate_subtitles_diarize.js"
   },
   "keywords": [],
   "author": "",
