@@ -16,3 +16,7 @@ models/
 # 排除系統暫存檔
 .DS_Store
 Thumbs.db
+
+# 敏感金鑰與設定檔
+.env
+gcp-key.json
